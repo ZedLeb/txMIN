@@ -1,0 +1,159 @@
+---
+title: "Capstone Notes"
+output: html_notebook
+---
+
+Following the submission of my [milestone report](http://rpubs.com/zedleb/230152) (unfinished) I decided to abandon both the *tm* and *qdap* packages and go all in with [tidytext](http://tidytextmining.com/).
+
+My reasons are two-fold  
+1. I resonate with the HadleyVerse :)  
+2. tidytext is a new package and it might gain me some extra interest in the final project!  
+
+
+###Sampling the data files
+This caused me a real headache for the milestone.  I did use something along the lines of the code below to read in via a connection and I got my 5% samples.  However, I noticed that the number of lines bore little resemblence to the number of words contained in the document and I felt I was getting a skewed sample.
+
+I want to sample in a proportion of the *words* of the datasets - not the lines.
+I am unsure how to progress this without first reading the lot in...and doing some sort of word count/line (I have code for this)
+```{r}
+
+#http://stackoverflow.com/questions/18705459/how-to-sample-a-specific-proportion-of-lines-from-a-big-file-in-r
+n <- 1000
+con <- file("text.txt", open = "r") # noticed that "rb" worked for the 'news' file
+head <- readLines(con, 1)
+sampdat <- readLines(con, n)
+k <- n
+while (length(curline <- readLines(con, 1))) {
+  k <- k + 1
+  if (runif(1) < n/k) f
+  sampdat[sample(n, 1)] <- curline
+}
+ # }
+close(con)
+delaysamp <- read.csv(textConnection(c(head, sampdat)))
+```
+
+###Tidytext
+
+Began learning via the [tutorial page](http://tidytextmining.com/tidytext.html) 
+
+Love the simplicity of 'unnest' which has a tokeniser built in and also removes punctuation and transforms to lower case in one function.  
+
+```{r, cache= TRUE}
+library(dplyr)
+library(ggplot2)
+library(tidytext)
+library(janeaustenr)
+library(stringr)
+
+original_books <- austen_books() %>%
+  group_by(book) %>%
+  mutate(linenumber = row_number(),
+         chapter = cumsum(str_detect(text, regex("^chapter [\\divxlc]",
+                                                 ignore_case = TRUE)))) %>%
+  ungroup()
+
+original_books
+
+tidy_books <- original_books %>%
+  unnest_tokens(word, text)
+
+tidy_books # 725054 obs
+```
+
+Stopwords are removed by an anti-join with the stop_words dataframe.  
+
+```{r}
+data(stop_words)
+
+tidy_books <- tidy_books %>%
+  anti_join(stop_words) # 217609 obs
+
+```
+
+Count of words in descending order
+```{r}
+tidy_books %>%
+  count(word, sort = TRUE) 
+```
+
+Visualisations with ggplot can be done straightaway
+```{r}
+tidy_books %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 600) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill=word)) +
+  geom_bar(stat = "identity") +
+  xlab(NULL) +
+  coord_flip()
+```
+
+
+Adding other datasets to enable cross comparisons within a tidy setup.  
+First HGWells
+```{r}
+library(gutenbergr)
+hgwells <- gutenberg_download(c(35, 36, 5230, 159))
+
+tidy_hgwells <- hgwells %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+
+tidy_hgwells %>%
+  count(word, sort = TRUE)
+
+```
+
+Then the Bronte sisters
+```{r}
+bronte <- gutenberg_download(c(1260, 768, 969, 9182, 766))
+
+tidy_bronte <- bronte %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+
+tidy_bronte %>%
+  count(word, sort = TRUE)
+```
+
+Joining them all together
+
+```{r}
+tidy_both <- bind_rows(
+  mutate(tidy_bronte, author = "Brontë Sisters"),
+  mutate(tidy_hgwells, author = "H.G. Wells"))
+frequency <- tidy_both %>%
+  mutate(word = str_extract(word, "[a-z]+")) %>%
+  count(author, word) %>%
+  rename(other = n) %>%
+  inner_join(count(tidy_books, word)) %>%
+  rename(Austen = n) %>%
+  mutate(other = other / sum(other),
+         Austen = Austen / sum(Austen)) %>%
+  ungroup()
+```
+Plotting  
+This would be a great exercise on the three different datasets for the Capstone.  Just to see the variety of words...
+```{r}
+library(scales)
+ggplot(frequency, aes(x = other, y = Austen, color = abs(Austen - other))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.4, height = 0.4) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  facet_wrap(~author, ncol = 2) +
+  theme(legend.position="none") +
+  labs(y = "Jane Austen", x = NULL)
+```
+We can perform correlation tests on the differnt texts
+```{r}
+cor.test(data = frequency[frequency$author == "Brontë Sisters",],
+         ~ other + Austen)
+
+cor.test(data = frequency[frequency$author == "H.G. Wells",], 
+         ~ other + Austen)
+```
+
